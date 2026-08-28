@@ -1,6 +1,6 @@
 # LogiRoute: Autonomous Multi-Agent Logistics & Disruption Dispatch System
 
-> Built with **Google Cloud's Agent Development Kit (ADK 2.8.0)** for the **5-Day AI Agents Intensive Hackathon / Capstone Project**.
+> Built with **Google Cloud's Agent Development Kit (ADK 2.8.0)** for the **5-Day AI Agents Course**.
 
 [![CI/CD Pipeline](https://github.com/dailysponge/AIin5days/actions/workflows/ci.yml/badge.svg)](https://github.com/dailysponge/AIin5days/actions)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
@@ -71,7 +71,7 @@ Modern freight logistics networks lose billions annually to in-transit disruptio
 
 ---
 
-## 3. Rubric Alignment & Scoring Optimization (Target: 95/95)
+## 3. Rubric Alignment & Scoring Optimization
 
 ### 1. Tool & Interface Design
 - **Strict Pydantic Input/Output Schemas**: Every domain tool strictly validates inputs and outputs via Pydantic v2 schemas:
