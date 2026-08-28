@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logiroute-agent"
+version = "1.0.0"
+description = "Autonomous Logistics & Disruption Resolution Agent using Google Cloud ADK"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "LogiRoute Team" }
+]
+keywords = ["google-adk", "agents", "logistics", "supply-chain", "gemini"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "strict"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
