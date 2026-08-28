@@ -1,0 +1,11 @@
+# Example Terraform variable values
+project_id             = "your-gcp-project-id"
+region                 = "us-central1"
+service_name           = "logiroute-agent"
+image_tag              = "latest"
+model_name             = "gemini-2.5-flash"
+log_level              = "INFO"
+container_port         = 8080
+min_instances          = 0
+max_instances          = 10
+allow_unauthenticated  = true

@@ -1,9 +1,16 @@
-"""Inventory and warehouse distribution tools for LogiRoute Agent."""
+"""Inventory and warehouse distribution tools for LogiRoute Agent using strict Pydantic schemas."""
 
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from logiroute.telemetry.tracing import AuditLogger, trace_span
+from logiroute.tools.schemas import (
+    AllocateStockInput,
+    AllocateStockOutput,
+    LocateInventoryInput,
+    LocateInventoryOutput,
+    WarehouseStockDetail,
+)
 
 # In-memory mock warehouse inventory
 _INVENTORY_LOCK = threading.Lock()
@@ -51,101 +58,130 @@ _WAREHOUSE_STOCK: Dict[str, Dict[str, Any]] = {
 }
 
 
-def locate_inventory(sku: str, required_qty: int, target_location: str) -> Dict[str, Any]:
+def locate_inventory(
+    sku: Union[str, LocateInventoryInput],
+    required_qty: Optional[int] = None,
+    target_location: Optional[str] = None,
+) -> LocateInventoryOutput:
     """Queries distribution centers across the network to locate available stock.
     
     Args:
-        sku: Stock Keeping Unit identifier (e.g. 'MED-VAX-882').
+        sku: Stock Keeping Unit identifier (e.g. 'MED-VAX-882') or LocateInventoryInput.
         required_qty: Quantity needed to satisfy demand.
         target_location: Target city/destination for delivery.
         
     Returns:
-        List of warehouses with available stock, distance estimate, and fulfillment viability.
+        LocateInventoryOutput with list of warehouses, availability, and fulfillment viability.
     """
-    clean_sku = sku.strip().upper()
-    with trace_span("tool.locate_inventory", {"sku": clean_sku, "required_qty": required_qty, "target_location": target_location}):
-        if required_qty <= 0:
-            return {
-                "success": False,
-                "error": f"Required quantity must be a positive integer, got {required_qty}.",
-            }
+    if isinstance(sku, LocateInventoryInput):
+        clean_sku = sku.sku.strip().upper()
+        req_qty = sku.required_qty
+        tgt_loc = sku.target_location.strip()
+    else:
+        clean_sku = str(sku).strip().upper()
+        req_qty = int(required_qty if required_qty is not None else 1)
+        tgt_loc = str(target_location or "National Logistics Hub").strip()
+
+    with trace_span("tool.locate_inventory", {"sku": clean_sku, "required_qty": req_qty, "target_location": tgt_loc}):
+        if req_qty <= 0:
+            return LocateInventoryOutput(
+                success=False,
+                sku=clean_sku,
+                required_qty=req_qty,
+                target_location=tgt_loc,
+                error=f"Required quantity must be a positive integer, got {req_qty}.",
+            )
         
-        matches: List[Dict[str, Any]] = []
+        matches: List[WarehouseStockDetail] = []
         with _INVENTORY_LOCK:
             for wh_id, wh in _WAREHOUSE_STOCK.items():
                 qty = wh["stock"].get(clean_sku, 0)
-                if qty >= required_qty:
-                    matches.append({
-                        "warehouse_id": wh_id,
-                        "warehouse_name": wh["name"],
-                        "location": wh["location"],
-                        "available_quantity": qty,
-                        "satisfies_request": True,
-                    })
+                if qty >= req_qty:
+                    matches.append(WarehouseStockDetail(
+                        warehouse_id=wh_id,
+                        warehouse_name=wh["name"],
+                        location=wh["location"],
+                        available_quantity=qty,
+                        satisfies_request=True,
+                    ))
                 elif qty > 0:
-                    matches.append({
-                        "warehouse_id": wh_id,
-                        "warehouse_name": wh["name"],
-                        "location": wh["location"],
-                        "available_quantity": qty,
-                        "satisfies_request": False,
-                    })
+                    matches.append(WarehouseStockDetail(
+                        warehouse_id=wh_id,
+                        warehouse_name=wh["name"],
+                        location=wh["location"],
+                        available_quantity=qty,
+                        satisfies_request=False,
+                    ))
         
-        return {
-            "success": True,
-            "sku": clean_sku,
-            "required_qty": required_qty,
-            "target_location": target_location,
-            "warehouses_with_stock": matches,
-            "total_viable_warehouses": len([m for m in matches if m["satisfies_request"]]),
-        }
+        return LocateInventoryOutput(
+            success=True,
+            sku=clean_sku,
+            required_qty=req_qty,
+            target_location=tgt_loc,
+            warehouses_with_stock=matches,
+            total_viable_warehouses=len([m for m in matches if m.satisfies_request]),
+        )
 
 
-def allocate_stock(sku: str, quantity: int, source_warehouse_id: str, target_shipment_id: str) -> Dict[str, Any]:
+def allocate_stock(
+    sku: Union[str, AllocateStockInput],
+    quantity: Optional[int] = None,
+    source_warehouse_id: Optional[str] = None,
+    target_shipment_id: Optional[str] = None,
+) -> AllocateStockOutput:
     """Allocates inventory from a distribution center for emergency shipment dispatch.
     
     Args:
-        sku: SKU identifier to reserve.
+        sku: SKU identifier to reserve or AllocateStockInput.
         quantity: Number of units to allocate.
         source_warehouse_id: The ID of the warehouse (e.g. 'DC-EASTCOAST').
         target_shipment_id: The shipment ID to assign the inventory to.
         
     Returns:
-        Confirmation status, remaining stock at warehouse, and reservation ID.
+        AllocateStockOutput with confirmation status, remaining stock, and reservation ID.
     """
-    clean_sku = sku.strip().upper()
-    clean_wh = source_warehouse_id.strip().upper()
-    with trace_span("tool.allocate_stock", {"sku": clean_sku, "qty": quantity, "warehouse": clean_wh}):
-        if quantity <= 0:
-            return {"success": False, "error": "Quantity must be greater than zero."}
+    if isinstance(sku, AllocateStockInput):
+        clean_sku = sku.sku.strip().upper()
+        alloc_qty = sku.quantity
+        clean_wh = sku.source_warehouse_id.strip().upper()
+        clean_shp = sku.target_shipment_id.strip().upper()
+    else:
+        clean_sku = str(sku).strip().upper()
+        alloc_qty = int(quantity if quantity is not None else 1)
+        clean_wh = str(source_warehouse_id or "").strip().upper()
+        clean_shp = str(target_shipment_id or "").strip().upper()
+
+    with trace_span("tool.allocate_stock", {"sku": clean_sku, "qty": alloc_qty, "warehouse": clean_wh}):
+        if alloc_qty <= 0:
+            return AllocateStockOutput(success=False, error="Quantity must be greater than zero.")
         
         with _INVENTORY_LOCK:
             wh = _WAREHOUSE_STOCK.get(clean_wh)
             if not wh:
-                return {"success": False, "error": f"Warehouse '{clean_wh}' does not exist."}
+                return AllocateStockOutput(success=False, error=f"Warehouse '{clean_wh}' does not exist.")
             
             curr_stock = wh["stock"].get(clean_sku, 0)
-            if curr_stock < quantity:
-                return {
-                    "success": False,
-                    "error": f"Insufficient stock at {clean_wh}. Requested: {quantity}, Available: {curr_stock}.",
-                }
+            if curr_stock < alloc_qty:
+                return AllocateStockOutput(
+                    success=False,
+                    error=f"Insufficient stock at {clean_wh}. Requested: {alloc_qty}, Available: {curr_stock}.",
+                )
             
-            wh["stock"][clean_sku] -= quantity
-            reservation_id = f"RESV-{clean_wh}-{clean_sku}-{quantity}"
+            wh["stock"][clean_sku] -= alloc_qty
+            reservation_id = f"RESV-{clean_wh}-{clean_sku}-{alloc_qty}"
             
             AuditLogger.log_event("inventory.allocated", {
                 "sku": clean_sku,
-                "quantity": quantity,
+                "quantity": alloc_qty,
                 "warehouse": clean_wh,
-                "target_shipment_id": target_shipment_id,
+                "target_shipment_id": clean_shp,
                 "reservation_id": reservation_id,
             })
             
-            return {
-                "success": True,
-                "reservation_id": reservation_id,
-                "allocated_quantity": quantity,
-                "remaining_stock": wh["stock"][clean_sku],
-                "warehouse": clean_wh,
-            }
+            return AllocateStockOutput(
+                success=True,
+                reservation_id=reservation_id,
+                allocated_quantity=alloc_qty,
+                remaining_stock=wh["stock"][clean_sku],
+                warehouse=clean_wh,
+            )

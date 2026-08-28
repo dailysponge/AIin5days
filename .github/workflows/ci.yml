@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-and-verify:
-    name: Test, Lint & Quality Benchmark
+    name: Test, Lint, IaC Validation & Quality Benchmark
     runs-on: ubuntu-latest
 
     steps:
@@ -29,6 +29,17 @@ jobs:
       - name: Verify Code Syntax and Imports
         run: |
           python -m py_compile logiroute/*.py logiroute/*/*.py main.py
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+
+      - name: Validate Terraform IaC Configuration
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
 
       - name: Run Test Suite & Automated Evaluation
         env:

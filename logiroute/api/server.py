@@ -1,9 +1,9 @@
-"""Production-ready FastAPI REST server for LogiRoute Agent."""
+"""Production-ready FastAPI REST server for LogiRoute Multi-Agent System."""
 
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,13 @@ from logiroute.config import config
 from logiroute.orchestration import LogisticsOrchestrator
 from logiroute.telemetry.tracing import AuditLogger
 from logiroute.tools import (
+    ApprovalInput,
+    ApprovalOutput,
+    CalculateRerouteOutput,
+    HumanApprovalDecisionInput,
+    HumanApprovalDecisionOutput,
+    IssueType,
+    TrackShipmentOutput,
     calculate_reroute_options,
     submit_human_approval,
     track_shipment,
@@ -23,11 +30,19 @@ class DispatchRequest(BaseModel):
     user_id: Optional[str] = Field("api_dispatcher", description="Identifier of the user or system calling the API")
 
 
+class ModelRoutingDetail(BaseModel):
+    tier: str
+    model_name: str
+    rationale: Optional[str] = None
+    complexity_score: Optional[float] = None
+
+
 class DispatchResponse(BaseModel):
     session_id: str
     correlation_id: str
     status: str
     mode: str
+    model_routing: Optional[ModelRoutingDetail] = None
     response: str
     tools_invoked: List[str]
     active_shipment_id: Optional[str] = None
@@ -61,8 +76,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="LogiRoute Agent API",
-    description="Autonomous Logistics & Disruption Resolution Agent powered by Google Cloud ADK",
+    title="LogiRoute Multi-Agent Logistics API",
+    description="Autonomous Logistics Dispatch & Disruption Resolution Multi-Agent System powered by Google Cloud ADK",
     version=config.telemetry.service_version,
     lifespan=lifespan,
 )
@@ -89,54 +104,68 @@ def health_check():
 
 
 @app.post("/api/v1/dispatch", response_model=DispatchResponse, tags=["Dispatch"])
-def dispatch_query(request: DispatchRequest):
-    """Processes a natural language logistics request through the ADK agent workflow."""
-    if not orchestrator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Orchestrator not ready.")
-    
-    result = orchestrator.process_query(
+async def dispatch_query(request: DispatchRequest, background_tasks: BackgroundTasks):
+    """Asynchronously processes a natural language logistics request through multi-agent collaboration."""
+    result = await orchestrator.process_query_async(
         query=request.query,
         session_id=request.session_id,
         user_id=request.user_id or "api_dispatcher",
     )
+    
+    # Asynchronous background task for audit metrics logging
+    background_tasks.add_task(
+        AuditLogger.log_event,
+        "api.dispatch_completed_async",
+        {
+            "session_id": result["session_id"],
+            "correlation_id": result["correlation_id"],
+            "tools_count": len(result.get("tools_invoked", [])),
+        },
+    )
+
+    routing_data = result.get("model_routing")
+    model_routing_model = ModelRoutingDetail(**routing_data) if routing_data else None
+
     return DispatchResponse(
         session_id=result["session_id"],
         correlation_id=result["correlation_id"],
         status=result["status"],
         mode=result["mode"],
+        model_routing=model_routing_model,
         response=result["response"],
         tools_invoked=result.get("tools_invoked", []),
         active_shipment_id=result.get("active_shipment_id"),
     )
 
 
-@app.get("/api/v1/shipments/{shipment_id}", tags=["Shipments"])
+@app.get("/api/v1/shipments/{shipment_id}", response_model=TrackShipmentOutput, tags=["Shipments"])
 def get_shipment_status(shipment_id: str):
     """Retrieves direct tracking status and sensor readings for a shipment."""
     result = track_shipment(shipment_id)
-    if not result.get("success"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.get("error"))
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.error)
     return result
 
 
-@app.post("/api/v1/shipments/{shipment_id}/reroute", tags=["Shipments"])
-def calculate_shipment_reroute(shipment_id: str, issue_type: str = "WEATHER_DELAY"):
+@app.post("/api/v1/shipments/{shipment_id}/reroute", response_model=CalculateRerouteOutput, tags=["Shipments"])
+def calculate_shipment_reroute(shipment_id: str, issue_type: IssueType = IssueType.WEATHER_DELAY):
     """Calculates rerouting strategies and cost/time trade-offs for a delayed shipment."""
     result = calculate_reroute_options(shipment_id, issue_type)
-    if not result.get("success"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.get("error"))
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.error)
     return result
 
 
-@app.post("/api/v1/approval", tags=["Guardrails"])
+@app.post("/api/v1/approval", response_model=HumanApprovalDecisionOutput, tags=["Guardrails"])
 def submit_approval(request: ApprovalRequest):
     """Submits a human dispatcher decision on a pending high-cost HITL ticket."""
-    result = submit_human_approval(
+    decision_input = HumanApprovalDecisionInput(
         approval_id=request.approval_id,
         approved=request.approved,
         reviewer_id=request.reviewer_id,
         reason=request.reason or "",
     )
-    if not result.get("success"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.get("error"))
+    result = submit_human_approval(decision_input)
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.error)
     return result
