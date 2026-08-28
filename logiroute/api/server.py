@@ -67,12 +67,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware for integration with frontend dashboards
+# CORS middleware for secure integration with frontend dashboards
+allowed_origins = [o.strip() for o in config.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
